@@ -1,0 +1,238 @@
+const express = require('express');
+const router = express.Router();
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const User = require('../models/User');
+const role = require('../middleware/role');
+const auth = require('../middleware/auth');
+
+// Password validation function
+const validatePassword = (password) => {
+    if (password.length < 6) {
+        return 'Password must be at least 6 characters long';
+    }
+    if (!/[A-Z]/.test(password)) {
+        return 'Password must contain at least one uppercase letter';
+    }
+    if (!/[0-9]/.test(password)) {
+        return 'Password must contain at least one number';
+    }
+    return null;
+};
+
+// Register user (only admin can register other admins)
+router.post('/register', async (req, res) => {
+    console.log('Registration attempt:', { email: req.body.email, name: req.body.name, role: req.body.role });
+    try {
+        const { email, password, name, role: requestedRole } = req.body;
+
+        // Validate input
+        if (!email || !password || !name) {
+            console.log('Registration failed: Missing required fields');
+            return res.status(400).json({ message: 'Please provide all required fields' });
+        }
+
+        // Validate password
+        const passwordError = validatePassword(password);
+        if (passwordError) {
+            console.log('Registration failed: Password validation failed', { error: passwordError });
+            return res.status(400).json({ message: passwordError });
+        }
+
+        // Check if user already exists
+        let user = await User.findOne({ email });
+        if (user) {
+            console.log('Registration failed: User already exists', { email });
+            return res.status(400).json({ message: 'User already exists' });
+        }
+
+        // Create new user
+        user = new User({
+            name,
+            email,
+            password,
+            role: requestedRole || 'user' // Default to 'user' if no role specified
+        });
+
+        // Hash password
+        const salt = await bcrypt.genSalt(10);
+        user.password = await bcrypt.hash(password, salt);
+
+        await user.save();
+        console.log('User registered successfully', { userId: user._id, email, role: user.role });
+
+        // Create JWT token
+        const payload = {
+            user: {
+                id: user.id,
+                role: user.role
+            }
+        };
+
+        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '24h' });
+
+        // Set cookie
+        res.cookie('token', token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            maxAge: 24 * 60 * 60 * 1000 // 24 hours
+        });
+
+        console.log('Registration completed successfully', { userId: user._id });
+        res.status(201).json({
+            message: 'Registration successful',
+            user: {
+                id: user._id,
+                name: user.name,
+                email: user.email,
+                role: user.role
+            }
+        });
+    } catch (err) {
+        console.error('Registration error:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// Login user
+router.post('/login', async (req, res) => {
+    console.log('Login attempt:', { email: req.body.email });
+    try {
+        const { email, password } = req.body;
+
+        // Validate input
+        if (!email || !password) {
+            console.log('Login failed: Missing credentials');
+            return res.status(400).json({ message: 'Please provide email and password' });
+        }
+
+        // Check if user exists
+        let user = await User.findOne({ email });
+        if (!user) {
+            console.log('Login failed: User not found', { email });
+            return res.status(400).json({ message: 'Invalid credentials' });
+        }
+
+        // Check if user is active
+        if (!user.isActive) {
+            console.log('Login failed: User account is inactive', { email });
+            return res.status(403).json({ message: 'Account is inactive' });
+        }
+
+        // Verify password
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) {
+            console.log('Login failed: Invalid password', { email });
+            return res.status(400).json({ message: 'Invalid credentials' });
+        }
+
+        // Update last login
+        user.lastLogin = new Date();
+        await user.save();
+
+        // Create JWT token
+        const payload = {
+            user: {
+                id: user.id,
+                role: user.role
+            }
+        };
+
+        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '24h' });
+
+        // Set cookie
+        res.cookie('token', token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            maxAge: 24 * 60 * 60 * 1000 // 24 hours
+        });
+
+        console.log('Login successful', { userId: user._id, email, role: user.role });
+        res.json({
+            message: 'Login successful',
+            user: {
+                id: user._id,
+                name: user.name,
+                email: user.email,
+                role: user.role
+            }
+        });
+    } catch (err) {
+        console.error('Login error:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// Get current user profile
+router.get('/profile', auth, async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id).select('-password');
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        res.json(user);
+    } catch (err) {
+        console.error('Error fetching user profile:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// Update user role (admin only)
+router.patch('/:id/role', auth, role(['admin']), async (req, res) => {
+    try {
+        const { role: newRole } = req.body;
+        const user = await User.findById(req.params.id);
+
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        user.role = newRole;
+        await user.save();
+
+        res.json({ message: 'User role updated successfully', user });
+    } catch (err) {
+        console.error('Error updating user role:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// Logout
+router.post('/logout', (req, res) => {
+    console.log('Logout attempt:', { userId: req.user?.id });
+    res.clearCookie('token');
+    console.log('Logout successful');
+    res.json({ message: 'Logout successful' });
+});
+
+// Check user permissions
+router.get('/permissions', auth, async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id).select('-password');
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        res.json({
+            user: {
+                id: user._id,
+                name: user.name,
+                email: user.email,
+                role: user.role,
+                isAdmin: user.role === 'admin',
+                permissions: {
+                    canAccessAdminDashboard: user.role === 'admin',
+                    canManageUsers: user.role === 'admin',
+                    canManageMembers: user.role === 'admin'
+                }
+            }
+        });
+    } catch (err) {
+        console.error('Error checking permissions:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+module.exports = router; 
