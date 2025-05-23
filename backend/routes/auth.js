@@ -164,14 +164,57 @@ router.post('/login', async (req, res) => {
         res.status(500).json({ message: 'Server error' });
     }
 });
+router.patch('/:id/membership', auth, async (req, res) => {
+    try {
+        const loggedInUserId = req.user.id;  // from auth middleware
+        const targetUserId = req.params.id;
+
+        // Only allow user to update their own membership
+        if (loggedInUserId !== targetUserId) {
+            return res.status(403).json({ message: 'Forbidden: You can only update your own membership.' });
+        }
+
+        const user = await User.findById(targetUserId);
+
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        // Check user role
+        if (user.role !== 'user') {
+            return res.status(403).json({ message: 'Only users with role "user" can update membership.' });
+        }
+
+        // Update membership to paid for 1 month
+        user.membership = 'paid';
+        user.membershipExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+        await user.save();
+
+        res.json({ message: 'Membership updated to paid for 1 month', user });
+    } catch (err) {
+        console.error('Error updating membership:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
 
 // Get current user profile
 router.get('/profile', auth, async (req, res) => {
     try {
         const user = await User.findById(req.user.id).select('-password');
+
         if (!user) {
             return res.status(404).json({ message: 'User not found' });
         }
+
+        // Auto downgrade membership if expired
+        if (user.membership === 'paid' && user.membershipExpiry && user.membershipExpiry < new Date()) {
+            user.membership = 'not paid';
+            user.membershipExpiry = null;
+            await user.save();
+        }
+
         res.json(user);
     } catch (err) {
         console.error('Error fetching user profile:', err);

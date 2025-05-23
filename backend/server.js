@@ -28,7 +28,7 @@ app.use("/api/auth", authRoutes);
 // MongoDB Connection
 mongoose
   .connect(
-    process.env.MONGODB_URI || "mongodb://localhost:27017/membership-qr-app",
+    process.env.MONGODB_URI,
     {
       useNewUrlParser: true,
       useUnifiedTopology: true,
