@@ -22,6 +22,15 @@ const userSchema = new mongoose.Schema({
         enum: ['admin', 'user'],
         default: 'user'
     },
+    membership: {
+        type: String,
+        enum: ['paid', 'not paid'],
+        default: 'not paid'
+    },
+    membershipExpiry: {
+        type: Date,
+        default: null
+    },
     createdAt: {
         type: Date,
         default: Date.now
@@ -42,4 +51,4 @@ userSchema.index({ role: 1 });
 
 const User = mongoose.model('User', userSchema);
 
-module.exports = User; 
+module.exports = User;
