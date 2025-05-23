@@ -69,7 +69,12 @@ const authService = {
 
     isAdmin: () => {
         return authService.hasRole('admin');
+    },
+    
+    getCurrentUserId: () => {
+        const user = authService.getCurrentUser();
+        return user?.id || null;
     }
 };
 
-export default authService; 
+export default authService;

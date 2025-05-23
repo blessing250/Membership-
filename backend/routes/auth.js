@@ -278,4 +278,91 @@ router.get('/permissions', auth, async (req, res) => {
     }
 });
 
-module.exports = router; 
+// Get all users (admin only)
+router.get('/all-users', auth, role(['admin']), async (req, res) => {
+    try {
+        console.log('Getting all users by admin:', { adminId: req.user.id });
+        
+        const users = await User.find().select('-password');
+        
+        // Check membership expiration for each user
+        const updatedUsers = await Promise.all(users.map(async (user) => {
+            if (user.membership === 'paid' && user.membershipExpiry && user.membershipExpiry < new Date()) {
+                user.membership = 'not paid';
+                user.membershipExpiry = null;
+                await user.save();
+            }
+            return user;
+        }));
+        
+        res.json(updatedUsers);
+    } catch (err) {
+        console.error('Error fetching all users:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// Get stats for admin dashboard
+router.get('/stats', auth, role(['admin']), async (req, res) => {
+    try {
+        // Get total users count
+        const totalMembers = await User.countDocuments();
+        
+        // Get paid members count
+        const paidMembers = await User.countDocuments({ membership: 'paid' });
+        
+        // Get unpaid members count (either explicitly not paid or null)
+        const unpaidMembers = await User.countDocuments({
+            $or: [
+                { membership: 'not paid' },
+                { membership: { $exists: false } },
+                { membership: null }
+            ]
+        });
+        
+        // Calculate total revenue (assuming 100 per paid membership)
+        const totalRevenue = paidMembers * 100;
+        
+        // Get recent activity (last 5 registrations)
+        const recentUsers = await User.find()
+            .sort({ createdAt: -1 })
+            .limit(5)
+            .select('name email role createdAt');
+            
+        res.json({
+            totalMembers,
+            paidMembers,
+            unpaidMembers,
+            totalRevenue,
+            recentUsers
+        });
+    } catch (err) {
+        console.error('Error fetching admin stats:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// Get a specific user by ID (admin only)
+router.get('/user/:id', auth, role(['admin']), async (req, res) => {
+    try {
+        const user = await User.findById(req.params.id).select('-password');
+        
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        
+        // Check if membership is expired
+        if (user.membership === 'paid' && user.membershipExpiry && user.membershipExpiry < new Date()) {
+            user.membership = 'not paid';
+            user.membershipExpiry = null;
+            await user.save();
+        }
+        
+        res.json(user);
+    } catch (err) {
+        console.error('Error fetching user:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+module.exports = router;

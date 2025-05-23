@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import axios from 'axios';
+import { toast } from 'react-toastify';
 import {
   ChartBarIcon,
   UserGroupIcon,
@@ -19,15 +21,69 @@ const AdminDashboard = () => {
     pendingApprovals: 0,
     monthlyRevenue: 0
   });
+  const [recentActivity, setRecentActivity] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  // Mock data for development
   useEffect(() => {
-    setStats({
-      totalMembers: 150,
-      activeMembers: 120,
-      pendingApprovals: 5,
-      monthlyRevenue: 2500
-    });
+    const fetchDashboardData = async () => {
+      try {
+        setLoading(true);
+        // Fetch stats data
+        const statsResponse = await axios.get('http://localhost:8000/api/auth/stats', {
+          withCredentials: true
+        });
+        
+        if (statsResponse.data) {
+          setStats({
+            totalMembers: statsResponse.data.totalMembers || 0,
+            activeMembers: statsResponse.data.paidMembers || 0,
+            pendingApprovals: statsResponse.data.unpaidMembers || 0,
+            monthlyRevenue: statsResponse.data.totalRevenue || 0
+          });
+        }
+        
+        // Fetch recent activity
+        try {
+          const activityResponse = await axios.get('http://localhost:8000/api/auth/stats', {
+            withCredentials: true
+          });
+          
+          // If we have recent users from the stats endpoint, format them for display
+          if (activityResponse.data && activityResponse.data.recentUsers) {
+            const formattedActivity = activityResponse.data.recentUsers.map((user, index) => ({
+              id: index,
+              action: 'User registered',
+              time: new Date(user.createdAt).toLocaleString(),
+              user: user.name
+            }));
+            setRecentActivity(formattedActivity);
+          }
+        } catch (activityError) {
+          console.error('Error fetching activity data:', activityError);
+          // Activity error is non-critical, so we continue
+        }
+      } catch (error) {
+        console.error('Error fetching dashboard data:', error);
+        toast.error('Failed to fetch dashboard data');
+        // Set fallback data for development
+        setStats({
+          totalMembers: 150,
+          activeMembers: 120,
+          pendingApprovals: 5,
+          monthlyRevenue: 2500
+        });
+        setRecentActivity([
+          { id: 1, action: 'New member registration', time: '2 minutes ago', user: 'John Doe' },
+          { id: 2, action: 'Membership approved', time: '15 minutes ago', user: 'Jane Smith' },
+          { id: 3, action: 'Payment received', time: '1 hour ago', user: 'Mike Johnson' },
+          { id: 4, action: 'Class booking', time: '2 hours ago', user: 'Sarah Wilson' }
+        ]);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchDashboardData();
   }, []);
 
   const StatCard = ({ title, value, icon: Icon, color }) => (
@@ -69,32 +125,38 @@ const AdminDashboard = () => {
       </div>
 
       {/* Stats Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <StatCard
-          title="Total Members"
-          value={stats.totalMembers}
-          icon={UserGroupIcon}
-          color="text-blue-500"
-        />
-        <StatCard
-          title="Active Members"
-          value={stats.activeMembers}
-          icon={ChartBarIcon}
-          color="text-green-500"
-        />
-        <StatCard
-          title="Pending Approvals"
-          value={stats.pendingApprovals}
-          icon={BellIcon}
-          color="text-yellow-500"
-        />
-        <StatCard
-          title="Monthly Revenue"
-          value={`$${stats.monthlyRevenue}`}
-          icon={CurrencyDollarIcon}
-          color="text-purple-500"
-        />
-      </div>
+      {loading ? (
+        <div className="flex justify-center items-center py-12">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          <StatCard
+            title="Total Members"
+            value={stats.totalMembers}
+            icon={UserGroupIcon}
+            color="text-blue-500"
+          />
+          <StatCard
+            title="Paid Members"
+            value={stats.activeMembers}
+            icon={ChartBarIcon}
+            color="text-green-500"
+          />
+          <StatCard
+            title="Unpaid Members"
+            value={stats.pendingApprovals}
+            icon={BellIcon}
+            color="text-yellow-500"
+          />
+          <StatCard
+            title="Total Revenue"
+            value={`RWF ${stats.monthlyRevenue}`}
+            icon={CurrencyDollarIcon}
+            color="text-purple-500"
+          />
+        </div>
+      )}
 
       {/* Quick Actions */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
@@ -102,7 +164,7 @@ const AdminDashboard = () => {
           title="Scan QR Code"
           description="Verify member access and approve memberships"
           icon={QrCodeIcon}
-          to="/admin/scan"
+          to="/admin/scanner"
           color="bg-primary"
         />
         <QuickAction
@@ -132,24 +194,23 @@ const AdminDashboard = () => {
       <div className="bg-white rounded-lg shadow-md p-6">
         <h2 className="text-xl font-semibold mb-4">Recent Activity</h2>
         <div className="space-y-4">
-          {[
-            { id: 1, action: 'New member registration', time: '2 minutes ago', user: 'John Doe' },
-            { id: 2, action: 'Membership approved', time: '15 minutes ago', user: 'Jane Smith' },
-            { id: 3, action: 'Payment received', time: '1 hour ago', user: 'Mike Johnson' },
-            { id: 4, action: 'Class booking', time: '2 hours ago', user: 'Sarah Wilson' },
-          ].map(activity => (
-            <div key={activity.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-              <div>
-                <p className="font-medium">{activity.action}</p>
-                <p className="text-sm text-gray-500">by {activity.user}</p>
+          {recentActivity.length > 0 ? (
+            recentActivity.map(activity => (
+              <div key={activity.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                <div>
+                  <p className="font-medium">{activity.action}</p>
+                  <p className="text-sm text-gray-500">by {activity.user}</p>
+                </div>
+                <span className="text-sm text-gray-400">{activity.time}</span>
               </div>
-              <span className="text-sm text-gray-400">{activity.time}</span>
-            </div>
-          ))}
+            ))
+          ) : (
+            <div className="text-center py-4 text-gray-500">No recent activity found</div>
+          )}
         </div>
       </div>
     </div>
   );
 };
 
-export default AdminDashboard; 
+export default AdminDashboard;
